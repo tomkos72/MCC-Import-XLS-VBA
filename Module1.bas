@@ -1,4 +1,5 @@
 Attribute VB_Name = "Module1"
+'Only to be able to show the process end message
 Dim ClosingMessageByOtherSub As Boolean
 
 Sub LoadMCCs()
@@ -9,6 +10,7 @@ Sub LoadMCCs()
         
     ClosingMessageByOtherSub = True
     
+    'Let select one or more MCC files
     Set ExcelFiles = Application.FileDialog(msoFileDialogFilePicker)
     ExcelFiles.AllowMultiSelect = True
     ExcelFiles.Filters.Clear
@@ -16,11 +18,12 @@ Sub LoadMCCs()
     ExcelFiles.Title = "Seleccione el/los ficheros a cargar"
     If (ExcelFiles.Show = -1) Then
         For Each vrtSelectedFiles In ExcelFiles.SelectedItems
+            'For all selected files, load the data
             ProcessedFiles = ProcessedFiles + HandleOneExcelFile(vrtSelectedFiles)
         Next vrtSelectedFiles
     End If
    
-    If ProcessedFiles > 0 Then
+    If ProcessedFiles > 0 Then 'if data has been processed then update summary and pivot and order the sheets
         ShowMessage (ProcessedFiles & " files have been processed")
         Call OrderSheets
         
@@ -33,22 +36,27 @@ Sub LoadMCCs()
     ClosingMessageByOtherSub = False
 End Sub
 
+' ***
+' this function processes one excel file
+' if processed without error, returns 1 in any other case 0
+' ***
 Function HandleOneExcelFile(vrtFileNameWithPath As Variant) As Long
     Dim strFileName As String
     Dim strMCCName As String
     Dim lngPosition As Long
     Dim StartCopyFromLine As Long
 
+    'get the filename
     lngPosition = InStrRev(vrtFileNameWithPath, "\")
-    
     If lngPosition > 0 Then
             strFileName = Mid(vrtFileNameWithPath, lngPosition + 1)
     Else
         HandleOneExcelFile = 0
         Exit Function
     End If
-    
     ShowMessage ("Start processing: " & strFileName)
+    
+    'the filename must contain the string "MCC_" if not, this is not a MCC file
     lngPosition = InStr(1, strFileName, "MCC_")
     If lngPosition > 0 Then
         strMCCName = Mid(strFileName, lngPosition + 4, 3)
@@ -58,6 +66,8 @@ Function HandleOneExcelFile(vrtFileNameWithPath As Variant) As Long
         Exit Function
     End If
     
+    ' Now open the mcc excel, and open the sheet "MCC".
+    ' if something goes wrong, then show a message and return
     On Error GoTo ErrorHandler1
     Set MCCSourceWorkbook = Workbooks.Open(vrtFileNameWithPath)
     Set MCCSourceWorkSheet = MCCSourceWorkbook.Sheets("MCC")
@@ -105,7 +115,7 @@ NoError2:
     Next maxLinesToCopy
     
     MCCSourceWorkSheet.Activate
-    ' copying the title lines?
+    ' copying the title lines? for new sheets it's necessary
     If StartCopyFromLine = 1 Then
         MCCSourceWorkSheet.Range("A1:W2").Copy
         
@@ -121,16 +131,22 @@ NoError2:
         Application.DisplayAlerts = True
     End If
     
-    MCCSourceWorkSheet.Range("A3:W" & maxLinesToCopy - 1).Copy
+    ' now copy the data, if there are any
+    If maxLinesToCopy > 3 Then
+        MCCSourceWorkSheet.Range("A3:W" & maxLinesToCopy - 1).Copy
+        
+        MCCTargetWorkSheet.Activate
+        MCCTargetWorkSheet.Cells(3, 1).Select
+        Application.DisplayAlerts = False
+        Selection.Insert Shift:=xlDown, CopyOrigin:=xlFormatFromRightOrBelow
+        Selection.PasteSpecial Paste:=xlPasteAllUsingSourceTheme, Operation:=xlNone _
+                , SkipBlanks:=False, Transpose:=False
+        Selection.PasteSpecial Paste:=xlPasteValues, Operation:=xlNone, SkipBlanks _
+        :=False, Transpose:=False
+    Else
+        ShowMessage ("No data to copy: " & strFileName)
+    End If
     
-    MCCTargetWorkSheet.Activate
-    MCCTargetWorkSheet.Cells(3, 1).Select
-    Application.DisplayAlerts = False
-    Selection.Insert Shift:=xlDown, CopyOrigin:=xlFormatFromRightOrBelow
-    Selection.PasteSpecial Paste:=xlPasteAllUsingSourceTheme, Operation:=xlNone _
-            , SkipBlanks:=False, Transpose:=False
-    Selection.PasteSpecial Paste:=xlPasteValues, Operation:=xlNone, SkipBlanks _
-    :=False, Transpose:=False
     MCCSourceWorkbook.Close SaveChanges:=False
     Application.DisplayAlerts = True
     ShowMessage ("Finished processing: " & strFileName)
@@ -146,16 +162,15 @@ Sub UpdateSummary()
     Application.ScreenUpdating = False
     SummaryWorkSheet.Activate
     
+    'Deleting the content first
     ShowMessage ("Deleting existing content")
-    
-    'Deleting
     Dim DeleteCounter As Long
     DeleteCounter = 1
     
     While SummaryWorkSheet.Cells(3, 2).Value <> ""
         SummaryWorkSheet.Rows(3).EntireRow.Delete
         DeleteCounter = DeleteCounter + 1
-        If DeleteCounter Mod 200 = 0 Then
+        If DeleteCounter Mod 200 = 0 Then 'show every certain time a status message
             ShowMessage ("Lines deleted: " & DeleteCounter)
         End If
     Wend
@@ -167,6 +182,7 @@ Sub UpdateSummary()
     
     CurrentLineToPaste = 3
     
+    'Inserting all sheets
     Application.ScreenUpdating = False
     For Each vrtAllSheets In ThisWorkbook.Sheets
         If Len(vrtAllSheets.Name) = 3 And (InStr(1, vrtAllSheets.Name, UCase(vrtAllSheets.Name), vbBinaryCompare) = 1) Then
@@ -178,35 +194,28 @@ Sub UpdateSummary()
                 End If
             Next maxLinesToCopy
             
-            vrtAllSheets.Range("A3:W" & maxLinesToCopy - 1).Copy
+            If maxLinesToCopy > 3 Then
+                vrtAllSheets.Range("A3:W" & maxLinesToCopy - 1).Copy
+                
+                SummaryWorkSheet.Activate
+                SummaryWorkSheet.Cells(CurrentLineToPaste, 1).Select
             
-            SummaryWorkSheet.Activate
-            SummaryWorkSheet.Cells(CurrentLineToPaste, 1).Select
-        
-            Selection.PasteSpecial Paste:=xlPasteAllUsingSourceTheme, Operation:=xlNone _
-                    , SkipBlanks:=False, Transpose:=False
-                    
-            CurrentLineToPaste = CurrentLineToPaste + maxLinesToCopy - 3
+                Selection.PasteSpecial Paste:=xlPasteAllUsingSourceTheme, Operation:=xlNone _
+                        , SkipBlanks:=False, Transpose:=False
+                        
+                CurrentLineToPaste = CurrentLineToPaste + maxLinesToCopy - 3
+            End If
             
         End If
     Next vrtAllSheets
     
+    'don't forget to update the pivot
     Call UpdatePivot
     
     ShowMessage ("Finished updating Summary")
     If (ClosingMessageByOtherSub = False) Then ShowMessage ("Finished - This window can be closed")
     Application.ScreenUpdating = True
     
-End Sub
-
-Sub testtextmessagebox()
-
-Dim i As Integer
-
-For i = 0 To 20
-    ShowMessage ("Test Message")
-Next i
-
 End Sub
 
 Sub ShowMessage(TextToAdd As String)
@@ -231,19 +240,31 @@ Sub UpdatePivot()
     
     Set SummaryWorkSheet = ThisWorkbook.Sheets("Summary")
 
+    'get the number of lines to take into account for the pivot
     For maxLinesToCopy = 3 To 3000
         If (SummaryWorkSheet.Cells(maxLinesToCopy, 2).Value = "") Then
             Exit For
         End If
     Next maxLinesToCopy
     
-    Set Pivottbl = ThisWorkbook.Sheets("Pivot").PivotTables(1).PivotCache
+    If maxLinesToCopy > 3 Then 'if there are data in Summary
+        Set Pivottbl = ThisWorkbook.Sheets("Pivot").PivotTables(1).PivotCache
+        
+        Set rng = SummaryWorkSheet.Range("A2:W" & maxLinesToCopy - 1)
+        Pivottbl.SourceData = rng.Address(True, True, xlR1C1, True)
+        Pivottbl.Refresh
+        
+        ShowMessage ("Finished updating Pivot table")
+    Else 'if there are no data in Summary
+        Set Pivottbl = ThisWorkbook.Sheets("Pivot").PivotTables(1).PivotCache
+        
+        Set rng = SummaryWorkSheet.Range("A2:W3")
+        Pivottbl.SourceData = rng.Address(True, True, xlR1C1, True)
+        Pivottbl.Refresh
+        
+        ShowMessage ("Finished updating Pivot table")
+    End If
     
-    Set rng = SummaryWorkSheet.Range("A2:W" & maxLinesToCopy - 1)
-    Pivottbl.SourceData = rng.Address(True, True, xlR1C1, True)
-    Pivottbl.Refresh
-    
-    ShowMessage ("Finished updating Pivot table")
     If (ClosingMessageByOtherSub = False) Then ShowMessage ("Finished - This window can be closed")
 End Sub
 
